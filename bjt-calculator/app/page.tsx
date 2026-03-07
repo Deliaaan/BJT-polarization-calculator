@@ -1,11 +1,11 @@
-import Image from "next/image";
-import SumOfTwo from "../components/valueField";
+import Calculator from "@/components/calculator";
+
 
 export default function Home() {
   return (
     <div >
       <main >
-        <SumOfTwo />
+        <Calculator></Calculator>
       </main>
     </div>
   );
