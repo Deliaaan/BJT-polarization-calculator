@@ -8,6 +8,7 @@ import 'katex/dist/katex.min.css';
 export default function Home() {
   const [polarizacion, setPolarizacion] = useState("Fija");
   const [vcc, setVcc] = useState("12");
+  const [vee, setVee] = useState("0"); 
   const [rb1, setRb1] = useState("240"); 
   const [rb2, setRb2] = useState("10");  
   const [resc, setResc] = useState("2.2"); 
@@ -17,63 +18,62 @@ export default function Home() {
 
   const renderLatex = (formula: string) => {
     return {
-      __html: katex.renderToString(formula, {
-        throwOnError: false,
-        displayMode: true
-      })
+      __html: katex.renderToString(formula, { throwOnError: false, displayMode: true })
     };
   };
 
   const resultados = useMemo(() => {
-    const VCC = Number(vcc) || 0;
-    const RC = (Number(resc) || 0) * 1000;
-    const RE = (Number(re) || 0) * 1000;
-    const B = Number(beta) || 1;
-    const R1 = (Number(rb1) || 0) * 1000;
-    const R2 = (Number(rb2) || 0) * 1000;
+    const VCC_val = parseFloat(vcc) || 0;
+    // Inversión de signo: si es -20, se vuelve 20 para la magnitud teórica
+    const VEE_input = parseFloat(vee) || 0;
+    const VEE_val = VEE_input < 0 ? Math.abs(VEE_input) : VEE_input;
+    
+    const RC_val = (parseFloat(resc) || 0) * 1000;
+    const RE_val = (parseFloat(re) || 0) * 1000;
+    const B_val = parseFloat(beta) || 1;
+    const R1_val = (parseFloat(rb1) || 0) * 1000;
+    const R2_val = (parseFloat(rb2) || 0) * 1000;
 
-    let icqTeorico = 0, vceqTeorico = 0, icSat = 0;
+    let icq = 0, vceq = 0, icSat = 0, vceCorte = VCC_val + VEE_val, vth = 0, rth = 0;
 
     if (polarizacion === "Fija") {
-      icqTeorico = B * ((VCC - vbe) / R1);
-      vceqTeorico = VCC - (icqTeorico * RC);
-      icSat = VCC / (RC || 1);
+      icq = B_val * ((VCC_val - vbe) / R1_val);
+      vceq = VCC_val - (icq * RC_val);
+      icSat = VCC_val / (RC_val || 1);
     } 
     else if (polarizacion === "RE") {
-      icqTeorico = B * ((VCC - vbe) / (R1 + (B + 1) * RE));
-      vceqTeorico = VCC - icqTeorico * (RC + RE);
-      icSat = VCC / ((RC + RE) || 1);
+      icq = B_val * ((VCC_val - vbe) / (R1_val + (B_val + 1) * RE_val));
+      vceq = VCC_val - icq * (RC_val + RE_val);
+      icSat = VCC_val / ((RC_val + RE_val) || 1);
     } 
     else if (polarizacion === "Division") {
-      const vth = (VCC * R2) / (R1 + R2);
-      const rth = (R1 * R2) / (R1 + R2);
-      icqTeorico = B * ((vth - vbe) / (rth + (B + 1) * RE));
-      vceqTeorico = VCC - icqTeorico * (RC + RE);
-      icSat = VCC / ((RC + RE) || 1);
+      // Cálculo de Vth según Boylestad para fuentes duales
+      rth = (R1_val * R2_val) / (R1_val + R2_val);
+      vth = (VCC_val * R2_val - VEE_val * R1_val) / (R1_val + R2_val);
+      
+      const ib = (vth + VEE_val - vbe) / (rth + (B_val + 1) * RE_val);
+      icq = B_val * ib;
+      
+      vceq = VCC_val + VEE_val - icq * (RC_val + RE_val);
+      icSat = (VCC_val + VEE_val) / ((RC_val + RE_val) || 1);
     } 
     else if (polarizacion === "Retroalimentacion") {
-      icqTeorico = B * ((VCC - vbe) / (R1 + B * (RC + RE)));
-      vceqTeorico = VCC - icqTeorico * (RC + RE);
-      icSat = VCC / ((RC + RE) || 1);
+      const ib = (VCC_val - vbe) / (R1_val + B_val * (RC_val + RE_val));
+      icq = B_val * ib;
+      vceq = VCC_val - icq * (RC_val + RE_val);
+      icSat = VCC_val / ((RC_val + RE_val) || 1);
     }
 
-    let estado = "Activo";
-    if (vceqTeorico <= 0) {
-      estado = "Saturación";
-      vceqTeorico = 0; icqTeorico = icSat;
-    } else if (icqTeorico <= 0) {
-      estado = "Corte";
-      icqTeorico = 0; vceqTeorico = VCC;
-    }
-
-    return { icq: icqTeorico * 1000, vceq: vceqTeorico, icSat: icSat * 1000, vceCorte: VCC, estado: estado };
-  }, [vcc, rb1, rb2, resc, re, beta, polarizacion]);
+    const estado = vceq <= 0 ? "Saturación" : (icq <= 0 ? "Corte" : "Activo");
+    return { icq: icq * 1000, vceq, icSat: icSat * 1000, vceCorte, vth, rth, estado, vee_mag: VEE_val };
+  }, [vcc, vee, rb1, rb2, resc, re, beta, polarizacion]);
 
   const dataRectaCarga = useMemo(() => {
     const puntos = [];
+    const corte = resultados.vceCorte || 1;
     for (let i = 0; i <= 50; i++) {
-      const vceVal = (resultados.vceCorte / 50) * i;
-      const icVal = resultados.icSat - (resultados.icSat / (resultados.vceCorte || 1)) * vceVal;
+      const vceVal = (corte / 50) * i;
+      const icVal = resultados.icSat - (resultados.icSat / corte) * vceVal;
       puntos.push({ vce: parseFloat(vceVal.toFixed(2)), ic: parseFloat(icVal.toFixed(2)) });
     }
     return puntos;
@@ -81,7 +81,7 @@ export default function Home() {
 
   const inputStyle = { width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc', fontSize: '13px', boxSizing: 'border-box' as const, marginTop: '4px' };
   const labelStyle = { fontWeight: 'bold' as const, fontSize: '12px', color: '#444' };
-  const formulaCardStyle = { padding: '8px 12px', backgroundColor: '#fcfcfc', border: '1px solid #eee', borderRadius: '8px', marginBottom: '8px', minHeight: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9em' };
+  const formulaCardStyle = { padding: '8px 12px', backgroundColor: '#fcfcfc', border: '1px solid #eee', borderRadius: '8px', marginBottom: '8px', minHeight: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.85em' };
 
   return (
     <div style={{ fontFamily: 'sans-serif', backgroundColor: '#f0f2f5', minHeight: '100vh', color: '#333' }}>
@@ -90,8 +90,8 @@ export default function Home() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', maxWidth: '1200px', margin: '0 auto', gap: '20px' }}>
           <img src="/logo1.png" alt="IPN" style={{ height: '50px' }} />
           <div style={{ textAlign: 'center', flex: 1 }}>
-            <h1 style={{ margin: 0, fontSize: '18px', color: '#0056b3' }}>Calculadora BJT - Electrónica Analógica</h1>
-            <div style={{ fontSize: '10px', color: '#888' }}> Martínez Díaz Isaac Ramses | Nava Juárez Diego Elian | Lamas García Jamin Gael | Reyes Santana Héctor Daniel </div>
+            <h1 style={{ margin: 0, fontSize: '18px', color: '#0056b3' }}>Calculadora BJT - Análisis Boylestad</h1>
+            <div style={{ fontSize: '10px', color: '#888', marginTop: '5px' }}> Martínez Díaz Isaac Ramses | Nava Juárez Diego Elian | Lamas García Jamin Gael | Reyes Santana Héctor Daniel </div>
           </div>
           <img src="/logo2.png" alt="ESIME" style={{ height: '50px' }} />
         </div>
@@ -107,67 +107,41 @@ export default function Home() {
       </header>
 
       <main style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '15px', padding: '15px', maxWidth: '1300px', margin: '0 auto' }}>
-        
         <section style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
           <div style={{ backgroundColor: 'white', padding: '15px', borderRadius: '12px', boxShadow: '0 4px 10px rgba(0,0,0,0.06)' }}>
             <h3 style={{ marginTop: 0, color: '#0056b3', fontSize: '16px', borderBottom: '1px solid #eee', paddingBottom: '8px' }}>Parámetros de Entrada</h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
               <div><label style={labelStyle}>VCC (V):</label><input type="number" style={inputStyle} value={vcc} onChange={e => setVcc(e.target.value)} /></div>
+              {polarizacion === "Division" && <div><label style={labelStyle}>VEE (V):</label><input type="number" style={inputStyle} value={vee} onChange={e => setVee(e.target.value)} /></div>}
               <div><label style={labelStyle}>Beta (β):</label><input type="number" style={inputStyle} value={beta} onChange={e => setBeta(e.target.value)} /></div>
               <div><label style={labelStyle}>{polarizacion === "Division" ? "R1 (kΩ):" : "RB (kΩ):"}</label><input type="number" style={inputStyle} value={rb1} onChange={e => setRb1(e.target.value)} /></div>
-              <div><label style={labelStyle}>VBE (V):</label><input type="text" style={{ ...inputStyle, backgroundColor: '#f9f9f9', color: '#888', cursor: 'not-allowed' }} value={vbe} readOnly /></div>
+              <div><label style={labelStyle}>VBE (V):</label><input type="text" style={{ ...inputStyle, backgroundColor: '#f9f9f9' }} value={vbe} readOnly /></div>
               {polarizacion === "Division" ? (
                 <div><label style={labelStyle}>R2 (kΩ):</label><input type="number" style={inputStyle} value={rb2} onChange={e => setRb2(e.target.value)} /></div>
               ) : (
-                <div><label style={labelStyle}>RC (kΩ):</label><input type="number" style={inputStyle} value={resc} onChange={e => setResc(e.target.value)} /></div>
+                <div><label style={labelStyle}>R_C (kΩ):</label><input type="number" style={inputStyle} value={resc} onChange={e => setResc(e.target.value)} /></div>
               )}
-              {polarizacion === "Division" && (
-                <div><label style={labelStyle}>RC (kΩ):</label><input type="number" style={inputStyle} value={resc} onChange={e => setResc(e.target.value)} /></div>
-              )}
-              {polarizacion !== "Fija" && (
-                <div><label style={labelStyle}>RE (kΩ):</label><input type="number" style={inputStyle} value={re} onChange={e => setRe(e.target.value)} /></div>
-              )}
-            </div>
-            <div style={{ marginTop: '15px', padding: '10px', textAlign: 'center', fontWeight: 'bold', borderRadius: '8px', backgroundColor: resultados.estado === "Activo" ? '#e6f4ea' : '#fce8e6', color: resultados.estado === "Activo" ? '#1e7e34' : '#d93025', border: '1px solid', fontSize: '13px' }}>
-              Región: {resultados.estado}
+              {polarizacion === "Division" && <div><label style={labelStyle}>R_C (kΩ):</label><input type="number" style={inputStyle} value={resc} onChange={e => setResc(e.target.value)} /></div>}
+              {polarizacion !== "Fija" && <div><label style={labelStyle}>R_E (kΩ):</label><input type="number" style={inputStyle} value={re} onChange={e => setRe(e.target.value)} /></div>}
             </div>
           </div>
 
           <div style={{ backgroundColor: 'white', padding: '15px', borderRadius: '12px', boxShadow: '0 4px 10px rgba(0,0,0,0.06)' }}>
-            <h4 style={{ margin: '0 0 10px 0', fontSize: '13px', color: '#0056b3' }}>Análisis Matemático Detallado</h4>
+            <h4 style={{ margin: '0 0 10px 0', fontSize: '13px', color: '#0056b3' }}>Análisis Matemático (Sustitución)</h4>
             <div style={{ overflowX: 'auto' }}>
-              {polarizacion === "Fija" && (
+              {polarizacion === "Division" ? (
                 <>
-                  <div style={formulaCardStyle} dangerouslySetInnerHTML={renderLatex(`I_{CQ} = \\beta \\frac{V_{CC} - V_{BE}}{R_B} = ${beta} \\cdot \\frac{${vcc}V - 0.7V}{${rb1}k\\Omega} = ${resultados.icq.toFixed(2)}mA`)} />
-                  <div style={formulaCardStyle} dangerouslySetInnerHTML={renderLatex(`V_{CEQ} = V_{CC} - I_{CQ}R_C = ${vcc}V - (${resultados.icq.toFixed(2)}mA \\cdot ${resc}k\\Omega) = ${resultados.vceq.toFixed(2)}V`)} />
-                  <div style={formulaCardStyle} dangerouslySetInnerHTML={renderLatex(`I_{C(sat)} = \\frac{V_{CC}}{R_C} = \\frac{${vcc}V}{${resc}k\\Omega} = ${resultados.icSat.toFixed(2)}mA`)} />
-                  <div style={formulaCardStyle} dangerouslySetInnerHTML={renderLatex(`V_{CE(off)} = V_{CC} = ${vcc}V`)} />
+                  <div style={formulaCardStyle} dangerouslySetInnerHTML={renderLatex(`V_{th} = \\frac{V_{CC}R_2 - (-V_{EE})R_1}{R_1+R_2} = ${resultados.vth.toFixed(2)}V`)} />
+                  <div style={formulaCardStyle} dangerouslySetInnerHTML={renderLatex(`I_{CQ} = \\beta \\frac{V_{th} + V_{EE} - V_{BE}}{R_{th} + (\\beta+1)R_E} \\approx ${resultados.icq.toFixed(2)}mA`)} />
+                  <div style={formulaCardStyle} dangerouslySetInnerHTML={renderLatex(`V_{CEQ} = V_{CC} + V_{EE} - I_{CQ}(R_C + R_E) \\approx ${resultados.vceq.toFixed(2)}V`)} />
+                </>
+              ) : (
+                <>
+                  <div style={formulaCardStyle} dangerouslySetInnerHTML={renderLatex(`I_{CQ} = \\beta I_B \\approx ${resultados.icq.toFixed(2)}mA`)} />
+                  <div style={formulaCardStyle} dangerouslySetInnerHTML={renderLatex(`V_{CEQ} = V_{CC} - I_{CQ}R_{total} \\approx ${resultados.vceq.toFixed(2)}V`)} />
                 </>
               )}
-              {polarizacion === "RE" && (
-                <>
-                  <div style={formulaCardStyle} dangerouslySetInnerHTML={renderLatex(`I_{CQ} = \\beta \\frac{V_{CC} - V_{BE}}{R_B + (\\beta + 1)R_E} = ${beta} \\cdot \\frac{${vcc}V - 0.7V}{${rb1}k + (${Number(beta) + 1})${re}k} = ${resultados.icq.toFixed(2)}mA`)} />
-                  <div style={formulaCardStyle} dangerouslySetInnerHTML={renderLatex(`V_{CEQ} = V_{CC} - I_{CQ}(R_C + R_E) = ${vcc}V - ${resultados.icq.toFixed(2)}mA(${resc}k + ${re}k) = ${resultados.vceq.toFixed(2)}V`)} />
-                  <div style={formulaCardStyle} dangerouslySetInnerHTML={renderLatex(`I_{C(sat)} = \\frac{V_{CC}}{R_C + R_E} = \\frac{${vcc}V}{${resc}k + ${re}k} = ${resultados.icSat.toFixed(2)}mA`)} />
-                  <div style={formulaCardStyle} dangerouslySetInnerHTML={renderLatex(`V_{CE(off)} = V_{CC} = ${vcc}V`)} />
-                </>
-              )}
-              {polarizacion === "Division" && (
-                <>
-                  <div style={formulaCardStyle} dangerouslySetInnerHTML={renderLatex(`V_{th} = \\frac{V_{CC} R_2}{R_1 + R_2} = \\frac{${vcc}V \\cdot ${rb2}k}{${rb1}k + ${rb2}k} = ${((Number(vcc) * Number(rb2)) / (Number(rb1) + Number(rb2))).toFixed(2)}V`)} />
-                  <div style={formulaCardStyle} dangerouslySetInnerHTML={renderLatex(`I_{CQ} = \\beta \\frac{V_{th} - V_{BE}}{R_{th} + (\\beta + 1)R_E} = ${resultados.icq.toFixed(2)}mA`)} />
-                  <div style={formulaCardStyle} dangerouslySetInnerHTML={renderLatex(`I_{C(sat)} = \\frac{V_{CC}}{R_C + R_E} = \\frac{${vcc}V}{${resc}k + ${re}k} = ${resultados.icSat.toFixed(2)}mA`)} />
-                  <div style={formulaCardStyle} dangerouslySetInnerHTML={renderLatex(`V_{CE(off)} = V_{CC} = ${vcc}V`)} />
-                </>
-              )}
-              {polarizacion === "Retroalimentacion" && (
-                <>
-                  <div style={formulaCardStyle} dangerouslySetInnerHTML={renderLatex(`I_{CQ} = \\beta \\frac{V_{CC} - V_{BE}}{R_B + \\beta(R_C + R_E)} = ${beta} \\cdot \\frac{${vcc}V - 0.7V}{${rb1}k + ${beta}(${resc}k + ${re}k)} = ${resultados.icq.toFixed(2)}mA`)} />
-                  <div style={formulaCardStyle} dangerouslySetInnerHTML={renderLatex(`V_{CEQ} = V_{CC} - I_{CQ}(R_C + R_E) = ${vcc}V - ${resultados.icq.toFixed(2)}mA(${resc}k + ${re}k) = ${resultados.vceq.toFixed(2)}V`)} />
-                  <div style={formulaCardStyle} dangerouslySetInnerHTML={renderLatex(`I_{C(sat)} = \\frac{V_{CC}}{R_C + R_E} = \\frac{${vcc}V}{${resc}k + ${re}k} = ${resultados.icSat.toFixed(2)}mA`)} />
-                  <div style={formulaCardStyle} dangerouslySetInnerHTML={renderLatex(`V_{CE(off)} = V_{CC} = ${vcc}V`)} />
-                </>
-              )}
+              <div style={formulaCardStyle} dangerouslySetInnerHTML={renderLatex(`I_{C(sat)} = ${resultados.icSat.toFixed(2)}mA \\quad V_{CE(off)} \\approx ${resultados.vceCorte.toFixed(2)}V`)} />
             </div>
           </div>
         </section>
@@ -175,7 +149,7 @@ export default function Home() {
         <section style={{ backgroundColor: 'white', padding: '15px', borderRadius: '12px', boxShadow: '0 4px 10px rgba(0,0,0,0.06)', display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '15px' }}>
             <div style={{ padding: '8px', background: '#f8f9fa', borderRadius: '8px', border: '1px solid #eee', fontSize: '12px' }}>
-              <strong>IC Sat (Máx):</strong> {resultados.icSat.toFixed(2)} mA<br/>
+              <strong>IC Sat:</strong> {resultados.icSat.toFixed(2)} mA<br/>
               <strong>VCE Corte:</strong> {resultados.vceCorte.toFixed(2)} V
             </div>
             <div style={{ padding: '8px', background: '#eef4ff', borderRadius: '8px', borderLeft: '4px solid #0056b3', fontSize: '12px' }}>
@@ -183,6 +157,8 @@ export default function Home() {
               <span style={{color: '#ff4500'}}><strong>VCEQ:</strong> {resultados.vceq.toFixed(2)} V</span>
             </div>
           </div>
+          
+          
 
           <div style={{ flex: 1, width: '100%', minHeight: '350px' }}>
             <ResponsiveContainer>
@@ -195,19 +171,11 @@ export default function Home() {
                   <Label value="IC (mA)" angle={-90} position="insideLeft" offset={0} style={{fontSize: '11px', fontWeight: 'bold'}} />
                 </YAxis>
                 <Tooltip formatter={(val: any) => [val + " mA", "IC"]} labelFormatter={(label) => `VCE: ${label} V`} />
-                <Line type="monotone" dataKey="ic" stroke="#0056b3" strokeWidth={3} dot={false} activeDot={{ r: 5 }} />
-                
-                <ReferenceDot x={0} y={resultados.icSat} r={4} fill="#0056b3" stroke="white" strokeWidth={1.5}>
-                   <Label value="Sat" position="right" offset={8} style={{fontSize: '9px', fill: '#0056b3', fontWeight: 'bold'}} />
-                </ReferenceDot>
-
-                <ReferenceDot x={resultados.vceCorte} y={0} r={4} fill="#0056b3" stroke="white" strokeWidth={1.5}>
-                   <Label value="Corte" position="top" offset={8} style={{fontSize: '9px', fill: '#0056b3', fontWeight: 'bold'}} />
-                </ReferenceDot>
-
+                <Line type="monotone" dataKey="ic" stroke="#0056b3" strokeWidth={3} dot={false} />
+                <ReferenceDot x={0} y={resultados.icSat} r={4} fill="#0056b3" stroke="white" strokeWidth={1.5} />
+                <ReferenceDot x={resultados.vceCorte} y={0} r={4} fill="#0056b3" stroke="white" strokeWidth={1.5} />
                 <ReferenceLine x={resultados.vceq} stroke="#ff4500" strokeDasharray="4 4" />
                 <ReferenceLine y={resultados.icq} stroke="#ff4500" strokeDasharray="4 4" />
-                
                 <ReferenceDot x={resultados.vceq} y={resultados.icq} r={6} fill="#ff4500" stroke="white" strokeWidth={1.5}>
                   <Label value="Q" position="top" offset={8} fill="#ff4500" fontWeight="bold" />
                 </ReferenceDot>
